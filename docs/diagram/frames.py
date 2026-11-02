@@ -1,7 +1,7 @@
 """Write N SVG frames of a D2 animated diagram: each dashed edge shifted by 1/N of its dash period, so the GIF loops seamlessly."""
 import re
 N = 12
-src = open('kroki/cr-anim.svg', encoding='utf-8').read()
+src = open('kroki/pipeline.svg', encoding='utf-8').read()
 pat = re.compile(r'stroke-dasharray:([\d.]+),([\d.]+);stroke-dashoffset:[-\d.]+;animation: dashdraw [^;"]+;?')
 print('animated edges:', len(pat.findall(src)))
 for k in range(N):

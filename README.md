@@ -1,5 +1,7 @@
 # tick-ledger
 
+![Live trades into Kafka, checked by Spark, reconciled against the exchange](docs/diagram/pipeline.gif)
+
 A small streaming pipeline that proves its own numbers. It reads live trades from Binance's public WebSocket, passes them through Kafka, builds one-minute candles with Spark Structured Streaming into Delta tables, and then checks the result two ways: against Kafka (is every record accounted for?) and against Binance's own candles (do they match?).
 
 **Setup:** Apache Kafka 3.9.0 (KRaft, one broker), Spark 3.5.3 (local mode), Delta Lake 3.2.1, DuckDB for the checks, Docker Compose. Three pairs: BTCUSDT, ETHUSDT, SOLUSDT. Public market data only, no keys. Every number below is from that run and is in [RESULTS.md](RESULTS.md). Traps I hit are in [DECISIONS.md](DECISIONS.md).
@@ -12,6 +14,10 @@ A small streaming pipeline that proves its own numbers. It reads live trades fro
 - 372 complete minutes matched Binance's own one-minute candles on open, high, low, close, volume and trade count, with zero mismatches, after filling the gaps.
 - Four deliberately bad messages (a copy of a real trade, text that is not JSON, a negative price, a trade an hour old) were each rejected with the right reason.
 - The checks found 153,714 trades the pipeline never received (a host pause, a producer outage, a few short drops). `src/backfill.py` fetched exactly those ids from the exchange and put them through the same checks; afterwards no gap was left.
+
+## Why it exists
+
+This one asks whether the stream adds up: every Kafka record has to end up in exactly one table, and every candle has to match the exchange's own. It found 153,714 trades it never received, filled them from the exchange, and then matched 372 minutes with zero mismatches. The mistakes along the way are in [DECISIONS.md](DECISIONS.md).
 
 ## Run it
 
