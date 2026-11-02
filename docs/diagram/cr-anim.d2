@@ -1,0 +1,62 @@
+grid-columns: 1
+grid-gap: 120
+direction: down
+**.style.font-size: 26
+**.style.stroke: "#343a40"
+(** -> **)[*].style.animated: true
+(** -> **)[*].style.font-size: 26
+(** -> **)[*].style.font-color: "#343a40"
+(** -> **)[*].style.italic: false
+(** -> **)[*].style.bold: true
+(** -> **)[*].style.stroke: "#1971c2"
+(** -> **)[*].style.stroke-width: 4
+
+classes: {
+  group: {
+    style.fill: "#f8f9fa"
+    style.font-size: 32
+    style.bold: true
+    label.near: top-left
+  }
+  card: {
+    icon.near: top-center
+    label.near: bottom-center
+    width: 340
+    height: 180
+  }
+}
+
+src: "1. Trades in" {
+  class: group
+  grid-rows: 1
+  grid-gap: 60
+  ws: "Exchange public\ntrade stream\nBTC, ETH, SOL" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/chart-line.svg; style.fill: "#d0ebff"}
+  kafka: "Kafka topic\nevery trade kept\nas received" {class: card; icon: https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/apachekafka.svg; style.fill: "#fff3bf"}
+  bf: "Backfill\nthe missing trades,\nfetched by id" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/rotate-right.svg; style.fill: "#d0ebff"}
+  ws -> kafka
+  bf -> kafka
+}
+
+spark: "2. Spark" {
+  class: group
+  grid-rows: 1
+  grid-gap: 70
+  clean: "Clean trades\n+ 1-minute candles\nin Delta" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/database.svg; style.fill: "#b2f2bb"}
+  check: "Check each trade\nmalformed, bad values,\ntoo late, duplicate" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/filter.svg; style.fill: "#fff3bf"}
+  rej: "Quarantine\nwith the reason\nfor each one" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/triangle-exclamation.svg; style.fill: "#ffc9c9"}
+  check -> clean
+  check -> rej
+}
+
+proof: "3. Does it add up?" {
+  class: group
+  grid-rows: 1
+  grid-gap: 70
+  ex: "Candles vs the\nexchange's own\n372 minutes,\n0 mismatches" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/circle-check.svg; style.fill: "#d3f9d8"}
+  space: "" {style.opacity: 0; width: 340; height: 180}
+  acct: "Every Kafka record\nin exactly one table\n0 missing, 0 twice" {class: card; icon: https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/svgs/solid/scale-balanced.svg; style.fill: "#d3f9d8"}
+}
+
+src.kafka -> spark.check: "reads"
+spark.clean -> proof.ex: "compared"
+spark.rej -> proof.acct: "counted"

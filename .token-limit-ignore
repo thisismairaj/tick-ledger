@@ -1,0 +1,4 @@
+# Paths the pre-commit token check (.githooks/pre-commit) skips, on top of its built-in list
+# (lockfiles, generated/minified code, csv/jsonl data, vendored dirs, binary files).
+# One glob per line. No "/" = match the file name anywhere; a "/" = match the path; trailing "/" = a directory.
+# Use this only for files nobody authors by hand or by agent (generated, dumps). Split everything else.

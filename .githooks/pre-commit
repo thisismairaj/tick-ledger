@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# pre-commit: refuse to commit files over MAX_FILE_TOKENS tokens (default 5000; tokens = bytes / 4).
+#
+# - Checks only STAGED files (added / copied / modified / renamed; deletions are ignored),
+#   using the staged blob size, so unstaged edits never matter.
+# - Skips files nobody authors by hand or by agent: lockfiles, generated code, minified bundles,
+#   data dumps, vendored dirs, and anything binary. Extra paths go in .token-limit-ignore.
+# - `.githooks/pre-commit --all` audits every tracked file instead of the staged ones.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Tune the limit:         MAX_FILE_TOKENS=8000 git commit ...
+# Bypass (avoid):         git commit --no-verify
+
+set -u
+
+MAX_TOKENS="${MAX_FILE_TOKENS:-5000}"
+LIMIT_BYTES=$((MAX_TOKENS * 4))
+root="$(git rev-parse --show-toplevel)" || exit 0
+ignore_file="$root/.token-limit-ignore"
+
+# Not authored by agents or humans. A pattern with no "/" matches the file name anywhere; a pattern
+# with "/" matches the path (a leading "*/" is implied); a trailing "/" matches a directory.
+BUILTIN_IGNORE=(
+  # lockfiles
+  'package-lock.json' 'npm-shrinkwrap.json' 'yarn.lock' 'pnpm-lock.yaml' 'bun.lock' 'bun.lockb'
+  'poetry.lock' 'uv.lock' 'pdm.lock' 'Pipfile.lock' 'Cargo.lock' 'composer.lock' 'Gemfile.lock'
+  'Podfile.lock' 'pubspec.lock' 'mix.lock' 'flake.lock' 'go.sum' 'packages.lock.json' '*.lock'
+  # generated / minified / compiled output
+  '*.min.js' '*.min.css' '*.map' '*.snap' '*.svg' '*_pb2.py' '*_pb2_grpc.py' '*.pb.go'
+  '*.generated.*' '*.gen.*' 'generated/' '__generated__/' 'dist/' 'build/' 'node_modules/' 'vendor/'
+  # data files
+  '*.csv' '*.tsv' '*.jsonl' '*.ndjson' '*.parquet'
+)
+
+patterns=("${BUILTIN_IGNORE[@]}")
+if [ -f "$ignore_file" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ''|'#'*) continue ;; esac
+    patterns+=("$line")
+  done < "$ignore_file"
+fi
+
+is_ignored() {
+  local path="$1" pat
+  for pat in "${patterns[@]}"; do
+    case "$pat" in
+      */) case "/$path" in *"/$pat"*) return 0 ;; esac ;;
+      /*) case "/$path" in $pat) return 0 ;; esac ;;
+      */*) case "/$path" in $pat|*/$pat) return 0 ;; esac ;;
+      *) case "${path##*/}" in $pat) return 0 ;; esac ;;
+    esac
+  done
+  return 1
+}
+
+if [ "${1:-}" = "--all" ]; then
+  scope="tracked"
+  list_files() { git ls-files -z; }
+else
+  scope="staged"
+  list_files() { git diff --cached --name-only --diff-filter=ACMR -z; }
+fi
+
+violations=()
+while IFS= read -r -d '' path; do
+  is_ignored "$path" && continue
+  size="$(git cat-file -s ":$path" 2>/dev/null)" || continue     # not a blob (submodule): skip
+  [ "$size" -le "$LIMIT_BYTES" ] && continue
+  git grep --cached -I -q -e '' -- ":(literal)$path" 2>/dev/null || continue   # binary: skip
+  violations+=("$size|$path")
+done < <(list_files)
+
+[ "${#violations[@]}" -eq 0 ] && exit 0
+
+{
+  echo
+  echo "COMMIT BLOCKED: ${#violations[@]} $scope file(s) exceed the $MAX_TOKENS-token limit (tokens = bytes / 4, so $LIMIT_BYTES bytes)."
+  echo
+  exts=" "
+  for v in "${violations[@]}"; do
+    size="${v%%|*}"; path="${v#*|}"
+    printf '  %s\n      %s bytes = ~%s tokens (%s.%s x the limit)\n' "$path" "$size" "$((size / 4))" \
+      "$((size / LIMIT_BYTES))" "$(( (size * 10 / LIMIT_BYTES) % 10 ))"
+    ext="${path##*.}"; exts="$exts$ext "
+  done
+  cat <<'TXT'
+
+WHY: a file this big cannot be read or edited in one piece by an agent without crowding out
+everything else it needs, and it slows human review too. Smaller files are the cheapest quality
+investment in the repo.
+
+HOW TO SPLIT EACH FILE (do the split in its own commit, with no behaviour changes):
+  1. Read the file and list its sections: classes, groups of related functions, big constants or
+     prompt strings, doc headings, top-level keys. Each section that has its own reason to change
+     becomes its own file.
+  2. Create the new files next to the original, named after what they hold (core/prompts.py ->
+     core/prompts_sql.py, core/prompts_routing.py ...). Aim for 3,000-4,000 tokens (about 12-16 KB,
+     roughly 300-400 lines of code) per file, not just under the limit, so there is headroom.
+  3. MOVE code, do not rewrite it. Keep names, signatures and text identical.
+  4. Keep the original path working: leave the original as a thin module that imports and
+     re-exports the moved names (Python: `from .prompts_sql import *`; JS/TS: `export * from`),
+     or update every import. Then grep for the old names and run the tests.
+  5. Check the sizes: git add <files> && git cat-file -s :path/to/new_file  (bytes; stay well under the limit).
+
+PER FILE TYPE:
+TXT
+  case "$exts" in *" py "*) echo "  .py        split by class or by feature; shared helpers go in a small *_utils.py; avoid circular imports by moving constants/types to their own module first." ;; esac
+  case "$exts" in *" js "*|*" ts "*|*" tsx "*|*" jsx "*) echo "  .js/.ts    one component or module per file; move types to *.types.ts; re-export through an index file." ;; esac
+  case "$exts" in *" md "*|*" txt "*) echo "  .md/.txt   split at '## ' headings into separate files in a folder, plus a short index file that links to each." ;; esac
+  case "$exts" in *" yaml "*|*" yml "*|*" json "*) echo "  .yaml/.json  split by top-level key into one file per entry and load/merge them in code, or move large embedded text out to separate files (this repo's semantic models already use sql_file for that)." ;; esac
+  case "$exts" in *" sql "*) echo "  .sql       one object (view, procedure, model) per file." ;; esac
+  cat <<'TXT'
+
+NOT AUTHORED BY AN AGENT OR A HUMAN (generated, vendored, a data dump)? Do not split it. Add its path
+or glob to .token-limit-ignore at the repo root (one pattern per line, '#' for comments) and commit that.
+
+Last resort for a single commit: git commit --no-verify   (the limit is MAX_FILE_TOKENS, default 5000)
+TXT
+  echo
+} >&2
+
+exit 1
